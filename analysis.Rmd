@@ -1,0 +1,160 @@
+---
+title: "Algae Blooms"
+author: "Alan Min"
+date: "3/23/2022"
+output: pdf_document
+---
+```{r, include=FALSE}
+knitr::opts_chunk$set(
+  comment = "#>", echo = FALSE, fig.width = 6, cache = TRUE
+)
+```
+
+# Changes in source code for RAIN
+In the umbCirc.R file, I added two lines of code so that the "score" that was calculated as part of the RAIN package are output as well.
+
+# Exploratory plots
+
+I'm here just running the RAIN statistical test on all of the peptides available in the HAB dataset. I'm plotting the time series for the track with the lowest 
+
+**Question** I'm not sure how to use the "deltat" parameter for the RAIN package. I think it should be 1 here, since we should be measuring at all time points, but I'm not 100% sure. I don't really understand what this parameter is actually doing. I also listed the period paramater as 6, since I think there should 6 measurements per day.
+
+```{r, warning=FALSE, echo=FALSE}
+library(rain)
+source("rain/R/calcStatistic.R")
+source("rain/R/mainFunction.R")
+source("rain/R/p.est.R")
+source("rain/R/umbCirc.R")
+HAB<- read.csv("~/Documents/UW Documents/algae_proj/HAB_RawPeptideQuant_MeanNormalizedArea_MMmodified.csv")
+HABgo = HAB[, 3:38]
+r = rain(t(HABgo), period=6, deltat=1)
+```
+
+
+After running RAIN, I am here plotting the peptide with the lowest p-value, i.e. the peptide that has the most confidence for having a rhythm. I've drawn a dotted line at the start of each day. 
+
+```{r}
+plot(as.numeric(log10(HABgo[which.min(r$pVal),] + 1)), main=paste("Lowest p-Value example ( p=", round(min(r$pVal), 6), ")"), ylab = "Log10(Value + 1)", las=2, type="l", xaxt="n", xlab="")
+axis(1, labels = names(HABgo), at = seq(36), las=2)
+for(i in seq(1, ncol(HABgo), by = 6) + 2){
+	abline(v = i, lty="dotted")	
+}
+```
+
+Below, I am plotting an example of a peptide which had a p-value of 1, i.e. very confident that there is no rhythm. 
+
+```{r}
+plot(as.numeric(log10(HABgo[which.max(r$pVal),] + 1)), main=paste("Highest p-Value example ( p=", round(max(r$pVal), 6), ")"), ylab = "Log10(Value + 1)", las=2, type="l", xaxt="n", xlab="")
+axis(1, labels = names(HABgo), at = seq(36), las=2)
+for(i in seq(1, ncol(HABgo), by = 6) + 2){
+	abline(v = i, lty="dotted")	
+}
+```
+
+
+As another exploratory plot, I am showing the distribution of p-values using a histogram. The counts on the histogram are logged, because there is a large number of p-values that are 1. The p-values are adjusted because in the package, they automatically test for different phases and shapes of the data. I think because of the adjustment for p-value, there are a lot of p-values that are 1. 
+
+```{r}
+hist.data = hist(r$pVal, plot=F)
+hist.data$counts = log10(hist.data$counts)
+plot(hist.data, ylab='log10(Frequency)', main = "Log Count Histogram of p-values")
+```
+
+# Test for change in rhythmicity
+
+I added a line in the source code of RAIN so that it would output the test statistic. To compute a statistic, which I call the "difference statistic", I subtracted the score of first 20 time points (days 16.5-20; the "start" period) from the score of the last 16 time points (day 21 - 22.67, the "end period"). We expect that if the start period is rhythmic and the end period is arhythmic, then $endscore - startscore$ will be small and negative. 
+
+I then made 100 permutations of the time points and used RAIN on each of those permuted data sets. We expect that these permuted time points would show no difference in rhythmicity, and hence can serve as an empirical null distribution for the difference statistic. 
+
+Below, I am plotting the test statistics for each of the peptides in red, and the permuted statistics in gray (there are 100x more points used for the permuted statistics because there are 100 permuted data sets). This shows that overall, there is not a big difference between the permuted and test statistics. 
+
+One issue that arose is that when I did this method is that for one of the high confidence difference statistics when I looked at the p-values of end period and start period, they were very similar. A possible explanation for this is that to calculate the p-value, the RAIN method calculates the number of possible permutations that would have led to a value as high or higher than the statistic, and this can be different for the same value of the statistic. 
+
+```{r}
+rains_start = list()
+rains_end = list()
+perm_reps = 100
+perm_stats = matrix(-1, perm_reps, nrow(HABgo))
+perm_pvals = matrix(-1, perm_reps, nrow(HABgo))
+# for (i in 1:perm_reps) {
+# 	print(i)
+# 	HABgo.perm = HABgo[, sample(36, 36)]
+# 	rains_start[[i]] = rain(t(HABgo.perm[, 1:20]), period = 6, deltat = 1)
+# 	rains_end[[i]] = rain(t(HABgo.perm[, 21:36]), period = 6, deltat = 1)
+# }
+# 
+# save(rains_start, file = "rains_start.Rda")
+# save(rains_end, file = "rains_end.Rda")
+load("rains_start.Rda")
+load("rains_end.Rda")
+
+for (i in 1:perm_reps){
+	perm_stats[i, ] = rains_end[[i]]$score - rains_start[[i]]$score 
+	perm_pvals[i, ] = rains_end[[i]]$pVal - rains_start[[i]]$pVal
+}
+
+test_rain_start = rain(t(HABgo[, 1:20]), period = 6, deltat = 1)
+test_rain_end = rain(t(HABgo[, 21:36]), period = 6, deltat = 1)
+test_stat_dif = test_rain_end$score - test_rain_start$score
+test_pval_dif = test_rain_end$pVal - test_rain_start$pVal
+
+hist(as.numeric(perm_stats), freq=FALSE,breaks=seq(-120, 70, by=10), main="Permutation versus test statistics")
+hist(test_stat_dif, freq = FALSE, breaks=seq(-120, 70, by=10), col=rgb(1, 0, 0, 1/4), add=TRUE)
+```
+
+Below, I'm plotting an example of a run that had a low permutation test p-value, and I drew a line between the start and end periods.
+
+```{r}
+test_stat_permutation_p = sapply(1:length(test_stat_dif), function(i) {return(mean(test_stat_dif[i] > perm_stats[, i]))})
+min_p = which.min(test_stat_permutation_p)
+
+plot(as.numeric(HABgo[min_p, ]), xaxt="n", xlab="", type="l", main=paste("Start pval:", round(test_rain_start$pVal[min_p], 4), "End pval:", round(test_rain_end$pVal[min_p], 4)), ylab="Value")
+points(as.numeric(HABgo[min_p, ]))
+axis(1, labels = names(HABgo), at = seq(36), las=2)
+abline(v=20, lty="dashed")
+```
+
+Below, you see that there is a big different between the scores, but the p-values are both pretty close to 1 for this particular example. 
+
+```{r}
+print(test_rain_start[min_p, ])
+print(test_rain_end[min_p, ])
+```
+
+I also plot the permutation values, and draw the test statistic in a red line for this example. 
+
+
+```{r}
+hist(perm_stats[, min_p])
+abline(v=test_stat_dif[min_p], col="red")
+```
+
+Another idea I had is that if we use the p-values and take the difference between the p-values, that could be in itself a statistic. The idea would be that we expect small p-values for the start, when we expect rhythmicity. In the end, we expect higher p-values, since we expect less rhythmicity. Below I am plotting the permutation p-values that we got from this method. 
+
+```{r}
+#This returns the probability that a permuted statistic is greater than the test statistic. Low probabilities indicate strong evidence that the the cyclicity is greater at the start than at the end.
+test_pvals_permutation_p = sapply(1:length(test_pval_dif), function(i) {return(mean(test_pval_dif[i] < perm_pvals[, i]))})
+hist(test_pvals_permutation_p)
+```
+
+I am then plotting the plot of the lowest permutation p-value example. 
+
+```{r}
+min_p = which.min(test_pvals_permutation_p)
+plot(as.numeric(HABgo[min_p, ]), xaxt="n", xlab="", type="l", main=paste("Start pval:", round(test_rain_start$pVal[min_p], 4), "End pval:", round(test_rain_end$pVal[min_p], 4)))
+points(as.numeric(HABgo[min_p, ]))
+axis(1, labels = names(HABgo), at = seq(36), las=2)
+abline(v=20, lty="dashed")
+
+print(test_rain_start[min_p, ])
+print(test_rain_end[min_p, ])
+```
+
+
+I am also plotting the permuted values and the test values.
+
+```{r}
+hist(perm_pvals[, min_p])
+abline(v=test_pval_dif[min_p], col="red")
+
+```
