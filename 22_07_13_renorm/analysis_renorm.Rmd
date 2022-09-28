@@ -1,0 +1,139 @@
+---
+title: "Harmful Algal Blooms"
+author: "Alan Min (Noble Lab)"
+date: '2022-07-13'
+output: pdf_document
+---
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(
+  comment = "#>", echo = FALSE, fig.width = 6, cache = TRUE, warning=FALSE, message=FALSE
+)
+
+my_plot_hook <- function(x, options)
+  paste("\n", knitr::hook_plot_tex(x, options), "\n")
+knitr::knit_hooks$set(plot = my_plot_hook)
+
+library(tidyverse)
+library(ggplot2)
+library(reshape2)
+library(scales)
+library(gridExtra)
+```
+
+# Basic Quality Checking
+
+We received a new data set from Miranda that has PRTC control and the TIC normalization. We start with some descriptive statistics about the dataset and some descriptive visualizations. Miranda removed >50% missing values (NAs, was only 6 peptides) but left in peptides with >50% zeroes. 
+
+```{r}
+HAB<- read.csv("HAB_SkylineCleaned_TICnormalized_PRTC.csv")
+HABgo = HAB[, 4:37]
+
+# Missingness by time point
+plot(colSums(is.na(HABgo)), type="l", xaxt = "n", xlab="", ylab="Number of NA or Zero at each time point", lty="dashed", ylim=c(0,700), main="Missingness by time point")
+axis(1, at = seq(1, 34), labels = colnames(HABgo), las=2, cex.axis=.7)
+
+points(colSums(HABgo == 0, na.rm = T), type="l", xaxt = "n", xlab="")
+legend("topleft", legend = c("Number of NA", "Number of 0s"), lty=c("dashed", "solid"))
+
+# Missingness by peptide
+missing_na = rowSums(is.na(HABgo))
+missing_zero = rowSums(HABgo == 0, na.rm = T)
+df = data.frame(Missing_NA = missing_na, Missing_zero = missing_zero)
+df = melt(df)
+
+ggplot(df) + geom_histogram(aes(x=value, fill=variable), alpha=.7, position="identity") + xlab("Amount of missingness") +ggtitle("Missingness by peptide")
+
+# Plot of PRTC 
+PRTC = HAB %>% filter(Protein == "iRT standards")
+PRTC = melt(PRTC, id.vars = c("Peptide", "Protein", "X"))
+ggplot(PRTC) + geom_line(aes(x=variable, y=log10(value), color=Peptide, group=Peptide)) + geom_point(aes(x=variable, y=log10(value), color=Peptide, group=Peptide), size=.6) + theme(axis.text.x = element_text(angle = 90)) + ggtitle("PRTC standards over time") + xlab("Time Point (Run_Day.Time)")
+
+# Plot of Yeast standard
+yeast = HAB %>% filter(Protein ==  "sp|P00924|ENO1_YEAST")
+yeast = melt(yeast, id.vars = c("Peptide", "Protein", "X"))
+ggplot(yeast) + geom_line(aes(x=variable, y=log10(value), color=Peptide, group=Peptide)) + geom_point(aes(x=variable, y=log10(value), color=Peptide, group=Peptide), size=.6) + theme(axis.text.x = element_text(angle = 90)) + ggtitle("Yeast standards over time") + xlab("Time Point (Run_Day.Time)")
+
+```
+
+
+# Looking at correlation between consecutive measurements
+
+The goal here is to do another quality control check where we look at consecutive measurements and see if they correlate with each other. The hypothesis is that if the quality of the experiments is good, then the measurements should not change that much between consecutive time points. In the plot below, the first time point is plotted along the x-axis with the following time point plotted on the y-axis. In this way, each point is represented both on the x-axis and the y-axis. For example, time point 17.01 (x-axis) is first plotted against 17.05 (y-axis). Then 17.05 (x-axis) is plotted against 17.09 (y-axis). Another quirk is that there is a data point that is missing, so some of the points are two time points away. 
+
+These plots show that without taking the log of the values, there is a 0.233 Pearson correlation, whereas when we take the log of the values, we have a .461 Pearson correlation. From my perspective, these are reasonably good values to be getting. 
+
+```{r}
+day1 = c()
+day2 = c()
+for(i in 1:(ncol(HABgo) - 1)) {
+	day1 = c(day1, HABgo[, i])
+	day2 = c(day2, HABgo[, i + 1])
+}
+df = data.frame(day1, day2)
+p1 = ggplot(df) + geom_point(aes(x=day1, y=day2), alpha=.2, size=.2) + ggtitle(sprintf("Cor: %.03f, Spear: %.03f", cor(day1, day2, use = "pairwise.complete.obs"), cor(day1, day2, use = "pairwise.complete.obs", method="spearman"))) + xlab("Time Point 1") + ylab("Time Point 2")
+p2 = ggplot(df) + geom_point(aes(x=log10(day1 + 1), y=log10(day2 + 1)), alpha=.2, size=.2)+ ggtitle(sprintf("Cor: %.03f, Spear: %.03f", cor(log10(day1+1), log10(day2+1), use = "pairwise.complete.obs"), cor(log10(day1+1), log10(day2+1), use = "pairwise.complete.obs", method="spearman"))) + xlab("Time Point 1") + ylab("Time Point 2")
+
+grid.arrange(p1, p2, ncol=2)
+```
+
+# Looking at correlation between different days 
+
+The hypothesis for this quality control step is to check whether measurements from the same time of day are correlated. Under the assumption that there is some cyclicity on a 24 hour basis, we would find that the measurements at the same time would be correlated. 
+
+Values from a time point on a day are plotted against the same time point the following day in this plot. For example, time point 17.01 would be plotted against 18.01. The points are omitted for time points where the following day is not available. The Pearson and Spearman correlation are reported for each of these plots. The color shows either the first day or the time point.  
+
+```{r}
+df = data.frame(t(data.frame(sapply(substr(names(HABgo), 5, 999999), function(x) strsplit(x, ".", fixed=T)))))
+names(df) = c("Day", "Time")
+df$Index = seq(1, 34)
+df$Day = as.numeric(df$Day)
+df$Time = as.numeric(df$Time)
+
+times = c()
+days = c()
+day1 = c()
+day2 = c() 
+for (index in df$Index) {
+	cur_day = df$Day[index]
+	cur_time = df$Time[index]
+	next_index = df$Index[df$Day == cur_day + 1 & df$Time == cur_time]
+	if (length(next_index) == 0){
+		next
+	} else if (length(next_index) == 1) {
+		day1 = c(day1, HABgo[, index])
+		day2 = c(day2, HABgo[, next_index])
+		times = c(times, rep(cur_time, nrow(HABgo)))
+		days = c(days, rep(cur_day, nrow(HABgo)))
+	} else {
+		stop("The index should be 0 or 1")
+	}
+}
+
+df = data.frame(times=as.factor(times), FirstDay=as.factor(days), day1=day1, day2=day2)
+
+
+alpha = .3
+size = .3
+nologcor = cor(day1, day2, use="pairwise.complete.obs")
+nologspear = cor(day1, day2, use="pairwise.complete.obs", method="spearman")
+logcor = cor(log10(day1 + 1), log10(day2 + 1), use="pairwise.complete.obs")
+logspear = cor(log10(day1 + 1), log10(day2 + 1), use="pairwise.complete.obs", method="spearman")
+ggplot(df) + geom_point(aes(x=day1, y=day2, color=times), alpha=alpha, size=size) + xlab("Time Point 1") + ylab("Same Time Next Day") + theme(axis.text.x = element_text(angle = 90)) + ggtitle(sprintf("Cor: %.03f, Spear: %.03f", nologcor, nologspear))
+ggplot(df) + geom_point(aes(x=day1, y=day2, color=FirstDay), alpha=alpha, size=size) + xlab("Time Point 1") + ylab("Same Time Next Day") + theme(axis.text.x = element_text(angle = 90))
+
+ggplot(df) + geom_point(aes(x=log10(day1 + 1), y=log10(day2 + 1), color=times), alpha=alpha, size=size) + xlab("log10(Time Point 1 + 1)") + ylab("log10(Same Time Next Day + 1)") + ggtitle(sprintf("Cor: %.03f, Spear: %.03f", logcor, logspear))
+ggplot(df) + geom_point(aes(x=log10(day1 + 1), y=log10(day2 + 1), color=FirstDay), alpha=alpha, size=size) + xlab("log10(Time Point 1 + 1)") + ylab("Same Time Next Day + 1")
+
+# grid.arrange(p1, p2, ncol=2)
+# grid.arrange(p3, p4, ncol=2)
+
+# df = data.frame(times=as.numeric(times), FirstDay=as.numeric(days), day1=day1, day2=day2)
+# df = melt(df, id.vars = c("day1", "day2"))
+# df$value = as.factor(df$value)
+# ggplot(df) + geom_point(aes(x=day1, y=day2, color=value), alpha=alpha, size=size) + xlab("Time Point 1") + ylab("Same Time Next Day") + facet_wrap("variable")  + theme(axis.text.x = element_text(angle = 90))
+```
+
+
+
+

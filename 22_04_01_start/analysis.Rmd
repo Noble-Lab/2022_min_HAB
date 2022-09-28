@@ -1,0 +1,531 @@
+---
+title: "Detection of change in rhythmicity in algal blooms"
+author: "Alan Min (University of Washington, Statistics)"
+date: "3/23/2022"
+output: pdf_document
+---
+```{r, include=FALSE}
+knitr::opts_chunk$set(
+  comment = "#>", echo = FALSE, fig.width = 6, cache = TRUE
+)
+
+my_plot_hook <- function(x, options)
+  paste("\n", knitr::hook_plot_tex(x, options), "\n")
+knitr::knit_hooks$set(plot = my_plot_hook)
+
+library(kableExtra)
+library(ggplot2)
+library(rain)
+source("rain/R/calcStatistic.R")
+source("rain/R/mainFunction.R")
+source("rain/R/p.est.R")
+source("rain/R/umbCirc.R")
+```
+
+# Simulations from random normal distribution
+
+Here I'm simulating noise to just sanity check that RAIN is doing something that we expect it to do. I'm plotting a histogram of the p-values that are obtained from using rain on the random gaussian noise, and then further plotting the lowest p-value example and the highest p-value example. 
+
+```{r}
+# X = matrix(rnorm(100000, 0, 1), ncol=1000, nrow=100)
+# r = rain(X, period=20, deltat=1)
+# save(X, file = "null_X.Rda")
+# save(r, file = "null_r.Rda")
+load("null_r.Rda")
+load("null_X.Rda")
+hist(r$pVal, main="Histogram of p-values", xlab="p-values")
+
+min_idx = which.min(r$pVal)
+phase = r$phase[min_idx]
+shape = r$peak.shape[min_idx]
+plot(X[, min_idx], main = paste("Lowest p-value,", sprintf("%.2e", min(r$pVal))), type="l", ylab="Value")
+for(i in seq(phase, ncol(X), by = r$period[1])){
+	abline(v = i, lty="dotted")	
+}
+for(i in seq(phase + shape, nrow(X), by = r$period[1])){
+	points(i, X[i, min_idx], pch = 12) 
+}
+
+max_idx = which.max(r$pVal)
+phase = r$phase[max_idx]
+shape = r$peak.shape[max_idx]
+plot(X[, max_idx], main = paste("Highest p-value,", sprintf("%.2e", max(r$pVal))), type="l", ylab="Value")
+for(i in seq(phase, ncol(X), by = r$period[1])){
+	abline(v = i, lty="dotted")	
+}
+for(i in seq(phase + shape, nrow(X), by = r$period[1])){
+	points(i, X[i, max_idx], pch = 12) 
+}
+```
+
+
+# Simulations from a sinusoid
+
+I simulated some data here where the first 100 examples are sinusoidal with $sin(2\pi / 25 \times x) + \epsilon$ where $x = \{0, \dots, 99\}$ and $\epsilon \sim N(0,1)$. The second 100 examples are just Gaussian noise. 
+
+```{r}
+nc = 100
+nr = 100
+x = seq(0, nr - 1)
+x = sin(2 * pi / 25 * x)
+m = matrix(rep(x, nc), nrow = nr, ncol = nc)
+m = m + matrix(rnorm(nr * nc), nrow = nr, ncol = nc)
+m = cbind(m, matrix(rnorm(nr * nc), nrow = nr, ncol = nc))
+r = rain(m, period=25, deltat=1)
+```
+
+First we plot a few examples of what the data looks like for the sinusoidal data
+
+```{r}
+par(mfrow = c(2,2))
+plot(m[, 1], main="Sinusoidal 1", type="l", ylab="Sine Value")
+plot(m[, 2], main="Sinusoidal 2", type="l", ylab="Sine Value")
+plot(m[, 3], main="Sinusoidal 3", type="l", ylab="Sine Value")
+plot(m[, 4], main="Sinusoidal 4", type="l", ylab="Sine Value")
+```
+
+We also plot what the random noise looks like 
+
+```{r}
+par(mfrow = c(2,2))
+plot(m[, 196], main="Gaussian 1", type="l", ylab="Gaussian Value")
+plot(m[, 197], main="Gaussian 2", type="l", ylab="Gaussian Value")
+plot(m[, 198], main="Gaussian 3", type="l", ylab="Gaussian Value")
+plot(m[, 199], main="Gaussian 4", type="l", ylab="Gaussian Value")
+```
+
+Finally, we plot the values of the p-values from these plots.
+
+```{r}
+
+plot(log10(r$pVal), ylab="Log10(p-val)")
+
+```
+
+# Power analysis 
+First we can try to do a power analysis based on how many time points are calculated. We'll simulate data according to 
+
+$$sin(2\pi x/24 ) + \epsilon $$ 
+
+Where $\epsilon \sim N(0,1)$ and X is evenly split from 0 to 192 (8 days), spaced by either 2, 4, 6, or 8 hours. We simulate 1000 peptides for each of these conditions. 
+
+```{r}
+# n_pep = 100
+# l = list()
+# for (hours in seq(2, 8, by = 2)){
+# 	print(hours)
+# 	x = seq(0, 192, by = hours)	
+# 	y = sin(2*pi*x/24)
+# 	dat = matrix(y, nrow = length(x), ncol = n_pep)
+# 	dat = dat + matrix(rnorm(length(x) * n_pep),  nrow = length(x), ncol = n_pep)
+# 	r = rain(dat, period = 24/hours, deltat = 1)
+# 	l[[hours]] = r
+# }
+# save(l, file = "power_calc.Rda")
+
+load("power_calc.Rda")
+results = do.call(rbind, l)
+PointsPerDay = as.factor(results$period)
+ggplot() + geom_point(aes(x = seq(1, 400), y = log10(results$pVal), color=PointsPerDay)) + xlab("Index") + ylab("Log10(P-value)")
+```
+
+```{r}
+n_pep = 100
+l = list()
+for (hours in seq(2, 8, by = 2)){
+	print(hours)
+	dat = matrix(rnorm(length(x) * n_pep),  nrow = length(x), ncol = n_pep)
+	r = rain(dat, period = 24/hours, deltat = 1)
+	l[[hours]] = r
+}
+# save(l, file = "power_calc_null.Rda")
+# 
+# load("power_calc_null.Rda")
+results = do.call(rbind, l)
+PointsPerDay = as.factor(results$period)
+ggplot() + geom_point(aes(x = seq(1, 400), y = log10(results$pVal), color=PointsPerDay)) + xlab("Index") + ylab("Log10(P-value)")
+```
+
+```{r}
+hours = 8
+l = list()
+dat = matrix(0, nrow=192/hours + 1, ncol=101)
+counter = 1
+for (noise in seq(0, 10, by=.1)){
+	x = seq(0, 192, by = hours)	
+	y = sin(2*pi*x/24) + rnorm(nrow(dat), sd = noise)
+	dat[, counter] = y
+	counter = counter + 1
+}
+r = rain(dat, period = 24/hours, deltat = 1)
+plot(seq(0, 10, by=.1), log10(r$pVal), ylab="Log10(P-value)", xlab="Noise SD")
+```
+
+Next we can investigate what happens when we have repeated measurements. 
+
+```{r}
+n_pep = 100
+hours = 4
+l = list()
+for (repeats in c(1,2,3)){
+	print(hours)
+	x = rep(seq(0, 192, by = hours), each=repeats)
+	y = sin(2*pi*x/24)
+	dat = matrix(y, nrow = length(x), ncol = n_pep)
+	dat = dat + matrix(rnorm(length(x) * n_pep * repeats),  nrow = length(x), ncol = n_pep)
+	r = rain(dat, period = 24/hours, deltat = 1, nr.series=repeats)
+	l[[repeats]] = r
+}
+
+Repeated_Measurements = as.factor(rep(c(1,2,3), each=100))
+results = do.call(rbind, l)
+ggplot() + geom_point(aes(x = seq(1, 300), y = log10(results$pVal), color=Repeated_Measurements)) + xlab("Index") + ylab("Log10(P-value)")
+```
+
+# Description of method
+
+The RAIN method uses a series of Mann-Whitney tests (also known as Wilcoxon rank sum tests) to detect rhythmicity in the data. The authors formulate that the data would be collected as $(X_{11}, \dots, X_{1m_1}), \dots, (X_{n1}, ..., X_{m_n})$, a set of $n$ samples of size $m_1, \dots, m_n$ collected from different times. We say these data are drawn from different populations $F_1(x), \dots, F_n(x)$. They then define the statistic 
+
+$$q_{i_k j_l} = \begin{cases}
+1 & \text{ if } X_{ik} < X_{jl}
+ \\ 0 &\text{else}\end{cases}$$ 
+
+and further they define 
+
+$$U_{ij} = \sum_{k=1}^{m_i} \sum_{l=1}^{m_j} q_{i_k j_l}$$ 
+
+If $U_{ij}$ is large, it serves as evidence that the data collected at time $j$ is greater than data collected at time $i$. 
+
+They then define the Jonckheere-Terpstra test, which tests the alternative hypothesis
+
+$$ F_1(x) < \dots <F_n (x) $$ 
+
+Using the statistic 
+
+$$s = \sum_{i=1}^{n-1} \sum_{j=i+1}^n U_{ij}  $$ 
+
+And $s$ is large if it is true that $F_1(x) < \dots <F_n (x)$. To calculate a p-value for $s$, we want to know $f(s)$, the number of permutations of all of the data points that would have resulted in a value at least as great as $s$. This can be calculated using a generating function, following Kendall and Stuart. 
+
+The innovation of RAIN is that they take the framework of the Jonckheere-Terpstra statistic and an extension of it to test the alternative hypothesis that 
+
+$$F_1(x) < \dots < F_{e_1}(x) > \dots > F_{e_2}(x) < \dots $$ 
+
+
+# Exploratory plots
+
+I'm here just running the RAIN statistical test on all of the peptides available in the HAB dataset. I'm plotting the time series for the track with the lowest p-value for rhythmicity to give an example of what a rhythmic peptide looks like.
+
+**Question** I'm not sure how to use the "deltat" parameter for the RAIN package. I think it should be 1 here, since we should be measuring at all time points, but I'm not 100% sure. I don't really understand what this parameter is actually doing. I also listed the period paramater as 6, since I think there should 6 measurements per day.
+
+```{r, warning=FALSE, echo=FALSE}
+HAB<- read.csv("~/Documents/UW Documents/algae_proj/HAB_RawPeptideQuant_MeanNormalizedArea_MMmodified.csv")
+HABgo = HAB[, 5:32]
+r = rain(t(HABgo), period=6, deltat=1)
+```
+
+
+After running RAIN, I am here plotting the peptide with the lowest p-value, i.e. the peptide that has the most confidence for having a rhythm. I've drawn a dotted line at the start of each day. 
+
+```{r}
+plot(as.numeric(log10(HABgo[which.min(r$pVal),] + 1)), main=paste("Lowest p-Value example ( p=", round(min(r$pVal), 6), ")"), ylab = "Log10(Value + 1)", las=2, type="l", xaxt="n", xlab="")
+axis(1, labels = names(HABgo), at = seq(36), las=2)
+for(i in seq(1, ncol(HABgo), by = 6) + 2){
+	abline(v = i, lty="dotted")	
+}
+```
+
+Below, I am plotting an example of a peptide which had a p-value of 1, i.e. very confident that there is no rhythm. 
+
+```{r}
+plot(as.numeric(log10(HABgo[which.max(r$pVal),] + 1)), main=paste("Highest p-Value example ( p=", round(max(r$pVal), 6), ")"), ylab = "Log10(Value + 1)", las=2, type="l", xaxt="n", xlab="")
+axis(1, labels = names(HABgo), at = seq(36), las=2)
+for(i in seq(1, ncol(HABgo), by = 6) + 2){
+	abline(v = i, lty="dotted")	
+}
+```
+
+
+As another exploratory plot, I am showing the distribution of p-values using a histogram. The counts on the histogram are logged, because there is a large number of p-values that are 1. The p-values are adjusted because in the package, they automatically test for different phases and shapes of the data. To adjust for these multiple tests, the authors use the "adaptive BH algorithm presented by Benjamini and Hochberg (2000)." I would guess that of this adjustment for p-value, there are a lot of p-values that are 1. I drew a dotted line where the uniform distribution would be. 
+
+```{r}
+hist.data = hist(r$pVal, plot=F, breaks=20)
+hist.data$counts = log10(hist.data$counts)
+plot(hist.data, ylab='log10(Frequency)', main = "Log Count Histogram of p-values", xlab = "p-value")
+abline(h = sum(hist.data$counts) / 20, lty="dashed")
+```
+
+# Test for change in rhythmicity
+
+I added a line in the source code of RAIN so that it would output the test statistic. To compute a statistic, which I call the "difference statistic", I subtracted the score of first 20 time points (days 16.5-20; the "start" period) from the score of the last 16 time points (day 21 - 22.67, the "end period"). We expect that if the start period is rhythmic and the end period is arhythmic, then $endscore - startscore$ will be small and negative. 
+
+I then made 100 permutations of the time points and used RAIN on each of those permuted data sets. We expect that these permuted time points would show no difference in rhythmicity, and hence can serve as an empirical null distribution for the difference statistic. 
+
+Below, I am plotting the test statistics for each of the peptides in red, and the permuted statistics in gray (there are 100x more points used for the permuted statistics because there are 100 permuted data sets). This shows that overall, there is not a big difference between the permuted and test statistics. 
+
+One issue that arose is that when I did this method is that for one of the high confidence difference statistics when I looked at the p-values of end period and start period, they were very similar. A possible explanation for this is that to calculate the p-value, the RAIN method calculates the number of possible permutations that would have led to a value as high or higher than the statistic, and this can be different for the same value of the statistic. 
+
+```{r}
+rains_start = list()
+rains_end = list()
+perm_reps = 100
+perm_stats = matrix(-1, perm_reps, nrow(HABgo))
+perm_pvals = matrix(-1, perm_reps, nrow(HABgo))
+# for (i in 1:perm_reps) {
+# 	print(i)
+# 	HABgo.perm = HABgo[, sample(36, 36)]
+# 	rains_start[[i]] = rain(t(HABgo.perm[, 1:20]), period = 6, deltat = 1)
+# 	rains_end[[i]] = rain(t(HABgo.perm[, 21:36]), period = 6, deltat = 1)
+# }
+# 
+# save(rains_start, file = "rains_start.Rda")
+# save(rains_end, file = "rains_end.Rda")
+load("rains_start.Rda")
+load("rains_end.Rda")
+
+for (i in 1:perm_reps){
+	perm_stats[i, ] = rains_end[[i]]$score - rains_start[[i]]$score 
+	perm_pvals[i, ] = rains_end[[i]]$pVal - rains_start[[i]]$pVal
+}
+
+test_rain_start = rain(t(HABgo[, 1:20]), period = 6, deltat = 1)
+test_rain_end = rain(t(HABgo[, 21:36]), period = 6, deltat = 1)
+test_stat_dif = test_rain_end$score - test_rain_start$score
+test_pval_dif = test_rain_end$pVal - test_rain_start$pVal
+
+hist(as.numeric(perm_stats), freq=FALSE,breaks=seq(-120, 70, by=10), main="Permutation versus test statistics", xlab = "End Score - Start Score")
+hist(test_stat_dif, freq = FALSE, breaks=seq(-120, 70, by=10), col=rgb(1, 0, 0, 1/4), add=TRUE)
+```
+
+Below, I'm plotting an example of a run that had a low permutation test p-value, and I drew a line between the start and end periods.
+
+```{r}
+test_stat_permutation_p = sapply(1:length(test_stat_dif), function(i) {return(mean(test_stat_dif[i] > perm_stats[, i]))})
+min_p = which.min(test_stat_permutation_p)
+
+plot(as.numeric(HABgo[min_p, ]), xaxt="n", xlab="", type="l", main=paste("Start pval:", round(test_rain_start$pVal[min_p], 4), "End pval:", round(test_rain_end$pVal[min_p], 4)), ylab="Value")
+points(as.numeric(HABgo[min_p, ]))
+axis(1, labels = names(HABgo), at = seq(36), las=2)
+abline(v=20, lty="dashed")
+```
+
+Below, we see that there is a big different between the scores, but the p-values are both pretty close to 1 for this particular example. 
+
+```{r}
+kable(test_rain_start[min_p, ], caption="Start period score")
+kable(test_rain_end[min_p, ], caption="End period score")
+```
+
+I also plot the permutation values, and draw the test statistic in a red line for this example. 
+
+
+```{r}
+hist(perm_stats[, min_p], main="Histogram of permuted statistics", xlab="End Score - Start Score")
+abline(v=test_stat_dif[min_p], col="red")
+```
+
+Another idea I had is that if we use the p-values and take the difference between the p-values, that could be in itself a statistic. The idea would be that we expect small p-values for the start, when we expect rhythmicity. In the end, we expect higher p-values, since we expect less rhythmicity. Below I am plotting the permutation p-values that we got from this method. 
+
+```{r}
+#This returns the probability that a permuted statistic is greater than the test statistic. Low probabilities indicate strong evidence that the the cyclicity is greater at the start than at the end.
+test_pvals_permutation_p = sapply(1:length(test_pval_dif), function(i) {return(mean(test_pval_dif[i] < perm_pvals[, i]))})
+hist(test_pvals_permutation_p, main="Histogram of permutation p-values", xlab="Permutation p-value")
+```
+
+I am then plotting the plot of the lowest permutation p-value example. 
+
+```{r}
+min_p = which.min(test_pvals_permutation_p)
+plot(as.numeric(HABgo[min_p, ]), xaxt="n", xlab="", type="l", main=paste("Start pval:", round(test_rain_start$pVal[min_p], 4), "End pval:", round(test_rain_end$pVal[min_p], 4)))
+points(as.numeric(HABgo[min_p, ]))
+axis(1, labels = names(HABgo), at = seq(36), las=2)
+abline(v=20, lty="dashed")
+
+print(test_rain_start[min_p, ])
+print(test_rain_end[min_p, ])
+```
+
+
+I am also plotting the permuted values and the test values.
+
+```{r}
+hist(perm_pvals[, min_p])
+abline(v=test_pval_dif[min_p], col="red")
+```
+
+# Investigating missing values
+
+To investigate the missing values, we are taking the most recent non-NA value and seeing if those values are close to 0. The idea was that if most of the NA values are 0, then we expect the previous value preceding the NA value to be close to zero. I'm calling this LOCF, or last observation carried forward. 
+
+```{r, echo=T}
+tHABgo = t(HABgo)
+n_mis = sum(is.na(tHABgo))
+nc = ncol(tHABgo)
+nr = nrow(tHABgo)
+
+# We are keeping the most recent value that was not NA in the data
+imputed_values = rep(0, n_mis)
+adj_to_zero = rep(0, n_mis)
+counter = 1
+zero_counter = 1
+
+# Go through each of the columns (peptides)
+for(col in 1:ncol(tHABgo)) {
+	
+	# Calculate the overall mean, excluding NA
+	overall_mean = mean(tHABgo[, col], na.rm=T)
+	
+	if(overall_mean == 0){
+		next
+	}
+	
+	# Go through each of the rows (time points)
+	for(row in 1:nrow(tHABgo)) {
+		
+		# If we find a NA value, record adjacent non-NA
+		if(is.na(tHABgo[row, col])){
+			non_na_count = 0
+			non_na_sum = 0
+			# If row is 1, we can't check the previous entry
+			if(row != 1) {
+				# If previous entry is not NA, check it
+				if(!is.na(tHABgo[row - 1, col])){
+					non_na_sum = non_na_sum + tHABgo[row - 1, col]
+					non_na_count = non_na_count + 1
+				}
+			}
+			
+			# If row is nr, we can't check the next entry
+			if(row != nr) {
+				# If next entry is not NA, check it
+				if(!is.na(tHABgo[row + 1, col])){
+					non_na_sum = non_na_sum + tHABgo[row + 1, col]
+					non_na_count = non_na_count + 1
+				}
+			}
+			if(non_na_count != 0) {
+				imputed_values[counter] = (non_na_sum/non_na_count)/overall_mean
+				counter = counter + 1
+			}
+		}
+	}
+}
+imputed_values = imputed_values[1:(counter-1)]
+
+
+for(col in 1:ncol(tHABgo)) {
+	
+	# Calculate the overall mean, excluding NA
+	overall_mean = mean(tHABgo[, col], na.rm=T)
+	
+	if(overall_mean == 0){
+		next
+	}
+	
+	# Go through each of the rows (time points)
+	for(row in 1:nrow(tHABgo)) {
+		
+		# If we find a 0 value, record adjacent non-NA
+		if(!is.na(tHABgo[row, col])) {
+			if(tHABgo[row, col] == 0){
+				non_na_count = 0
+				non_na_sum = 0
+				# If row is 1, we can't check the previous entry
+				if(row != 1) {
+					# If previous entry is not NA, check it
+					if(!is.na(tHABgo[row - 1, col])){
+						non_na_sum = non_na_sum + tHABgo[row - 1, col]
+						non_na_count = non_na_count + 1
+					}
+				}
+				
+				# If row is nr, we can't check the next entry
+				if(row != nr) {
+					# If next entry is not NA, check it
+					if(!is.na(tHABgo[row + 1, col])){
+						non_na_sum = non_na_sum + tHABgo[row + 1, col]
+						non_na_count = non_na_count + 1
+					}
+				}
+				if(non_na_count != 0) {
+					adj_to_zero[counter] = (non_na_sum/non_na_count)/overall_mean
+					counter = counter + 1
+				}
+			}
+		}
+	}
+}
+adj_to_zero = adj_to_zero[1:(zero_counter-1)]
+
+
+counter = 1
+all_values = rep(0, nr * nc)
+for(col in 1:ncol(tHABgo)) {
+	
+	# Calculate the overall mean, excluding NA
+	overall_mean = mean(tHABgo[, col], na.rm=T)
+	
+	if(overall_mean == 0){
+		next
+	}
+	
+	# Go through each of the rows (time points)
+	for(row in 1:nrow(tHABgo)) {
+		if (!is.na(tHABgo[row, col])) {
+			all_values[counter] = (tHABgo[row, col]) / overall_mean
+			counter = counter + 1
+		}
+	}
+}
+all_values = all_values[1:(counter - 1)]
+
+
+
+# Plot values 			
+df1 = data.frame(val = imputed_values, name = "Imputed")
+df2 = data.frame(val = all_values, name = "All Values")
+df3 = data.frame(val = adj_to_zero, name = "Adjacent to Zero")
+df = rbind(df1, df2, df3)
+ggplot(df) +
+	geom_density(aes(x=log10(val + 1e-9), fill=name), alpha=.5) +
+	xlab("log10(Value)") +
+	ggtitle(sprintf("Overall mean: %.3f, Imputed mean: %.3f, Adj to Zero: %.6f", 
+					mean(all_values, na.rm=TRUE), mean(imputed_values), mean(adj_to_zero)))
+```
+
+```{r}
+adj_to_zero = rep(0, nr * nc)
+imputed = rep(0, nr * nc)
+zero_counter = 0
+imputed_counter = 0
+all_values = as.vector(tHABgo)
+all_values = all_values[!is.na(all_values)]
+
+for(col in 1:nc) {
+	for(row in 1:nr) {
+		if(!is.na(tHABgo[row, col]) && tHABgo[row, col] == 0 && row < nr && !is.na(tHABgo[row + 1, col]) ) {
+			adj_to_zero[zero_counter] = tHABgo[row + 1, col]
+			zero_counter = zero_counter + 1 
+		}
+		if(is.na(tHABgo[row, col]) && row < nr && !is.na(tHABgo[row + 1, col]) ) {
+			imputed[imputed_counter] = tHABgo[row + 1, col]
+			imputed_counter = imputed_counter + 1 
+		}
+	}
+}
+
+df1 = data.frame(val = imputed, name = "Imputed")
+df2 = data.frame(val = all_values, name = "All Values")
+df3 = data.frame(val = adj_to_zero, name = "Adjacent to Zero")
+df = rbind(df1, df2, df3)
+ggplot(df) +
+	geom_density(aes(x=log10(val + 1e-9), fill=name), alpha=.5) +
+	xlab("log10(Value)") +
+	ggtitle(sprintf("Overall mean: %.3f, Imputed mean: %.3f, Adj to Zero: %.6f", 
+					mean(all_values, na.rm=TRUE), mean(imputed), mean(adj_to_zero)))
+```
+
+```{r}
+for(i in 1:10) {
+	plot(tHABgo[,i ], type="l")	
+}
+```

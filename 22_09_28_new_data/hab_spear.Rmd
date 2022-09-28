@@ -1,0 +1,110 @@
+---
+title: "hab_spear"
+author: "Alan Min"
+date: '2022-09-28'
+output: html_document
+---
+
+# Data set 1: "Rcleaned.csv" 
+
+### Spearman with "Pairwise Complete Observations" 
+
+```{r}
+library(corrplot)
+HAB = read.csv("HAB_2021_DDA_metagenome_contam_v1.4.10-1.12.31_TICnormalized_092722_36samples_final_Rcleaned.csv")
+HABgo = HAB[, 2:37]
+names(HABgo) = paste("X", substr(names(HABgo), 5, nchar(names(HABgo))), sep="")
+m = cor(HABgo, use = "pairwise.complete.obs", method = "spearman")
+corrplot(m, type="upper", order="alphabet")
+```
+
+# Pearson correlation with "Pairwise Complete Observations"
+
+```{r}
+m = cor(HABgo, use = "pairwise.complete.obs", method = "pearson")
+corrplot(m, type="upper", order="alphabet")
+```
+
+
+### Spearman with "complete.obs"
+
+```{r}
+m = cor(HABgo, use = "complete.obs", method = "spearman")
+corrplot(m, type="upper", order="alphabet")
+```
+
+### Pearson with "complete.obs"
+
+```{r}
+m = cor(HABgo, use = "complete.obs", method = "pearson")
+corrplot(m, type="upper", order="alphabet")
+```
+
+
+### Printing a few scatter plots 
+```{r}
+plot(HABgo[, 1:5], pch=16, col=rgb(0, 0, 0, 0.1), main="Raw Values")
+plot(log10(HABgo[, 1:5] + 1), pch=16, col=rgb(0, 0, 0, 0.3), main="Log10(X + 1)", cex = .3)
+```
+
+# Same correlation plot but by day
+
+```{r}
+HABgo_by_day = HABgo
+lab = names(HABgo_by_day)
+hour = substr(lab, 5, nchar(lab))
+day = substr(lab, 2, 3)
+new_lab = paste("H", hour, ".", "D", day, sep="")
+o = order(new_lab)
+HABgo_by_day = HABgo_by_day[, o]
+
+m = cor(HABgo_by_day, use = "pairwise.complete.obs", method = "spearman")
+corrplot(m, type="upper", order="original", main="Spearman ordered by day")
+
+m = cor(HABgo, use = "pairwise.complete.obs", method = "pearson")
+corrplot(m, type="upper", order="original", main="Pearson ordered by day")
+```
+
+# Normalization by enolase
+
+```{r}
+enolase = read.csv("HAB_2021_DDA_metagenome_contam_v1.4.10-1.12.31_TICnormalized_092722_36samples_final_enolaseOnly.csv")
+enolase = enolase[, 4:ncol(enolase)]
+names(enolase) = paste("X", substr(names(enolase), 5, 9), sep="")
+enolase_means = apply(enolase, 2, mean)
+
+HABgo_normalized = HABgo
+for (i in 1:ncol(HABgo_normalized)) {
+	tmp = HABgo_normalized[, i]	
+	tmp = tmp / enolase_means[names(HABgo_normalized)[i]]
+	HABgo_normalized[, i] = tmp 
+}
+```
+
+```{r}
+m = cor(HABgo_normalized, use = "pairwise.complete.obs", method = "pearson")
+corrplot(m, type="upper", order="alphabet")
+plot(HABgo_normalized[, 1:5], pch=16, col=rgb(0, 0, 0, 0.1), main="Raw Values")
+plot(log10(HABgo_normalized[, 1:5] + 1), pch=16, col=rgb(0, 0, 0, 0.3), main="Log10(X + 1)", cex = .3)
+```
+
+# Plotting a few select peptides
+
+```{r}
+library(reshape2)
+library(ggplot2)
+
+HAB = read.csv("HAB_2021_DDA_metagenome_contam_v1.4.10-1.12.31_TICnormalized_092722_36samples_final_Rcleaned.csv")
+names(HAB) = paste("X", substr(names(HAB), 5, nchar(names(HAB))), sep="")
+names(HAB)[1] = "Peptide"
+
+set.seed(23)
+peptides = sample(nrow(HAB), 10)
+HAB = HAB[peptides, ]
+HAB = melt(HAB, id.vars="Peptide")
+
+ggplot(HAB) + geom_point(aes(x=variable, y=value, color=Peptide)) + geom_line(aes(x=variable, y=value, color=Peptide, group=Peptide)) + theme(axis.text.x = element_text(angle = 90)) + ggtitle("10 Randomly Selected Peptides") + xlab("Time Point (Run_Day.Time)") + ylab("Peptide Quant")
+
+ggplot(HAB) + geom_point(aes(x=variable, y=log10(value), color=Peptide)) + geom_line(aes(x=variable, y=log10(value), color=Peptide, group=Peptide)) + theme(axis.text.x = element_text(angle = 90)) + ggtitle("10 Randomly Selected Peptides (Logged)") + xlab("Time Point (Run_Day.Time)") + ylab("Log10(Peptide Quant)")
+```
+

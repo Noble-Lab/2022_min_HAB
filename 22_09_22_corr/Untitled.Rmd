@@ -1,0 +1,72 @@
+---
+title: "Untitled"
+author: "Alan Min"
+date: '2022-09-18'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(corrplot)
+library(RColorBrewer)
+
+knitr::opts_chunk$set(
+  comment = "#>", echo = FALSE, fig.width = 6, cache = TRUE
+)
+
+my_plot_hook <- function(x, options)
+  paste("\n", knitr::hook_plot_tex(x, options), "\n")
+knitr::knit_hooks$set(plot = my_plot_hook)
+
+library(kableExtra)
+library(ggplot2)
+library(rain)
+HAB<- read.csv("~/Documents/UW Documents/algae_proj/22_07_13_renorm/HAB_SkylineCleaned_TICnormalized_PRTC.csv")
+HABgo = HAB[, 4:37]
+names(HABgo) = paste("X", substring(names(HABgo), 5), sep="")
+m = cor(HABgo, use="pairwise.complete.obs")
+corrplot(m, type="upper", order="alphabet",
+         col=brewer.pal(n=33, name="RdYlBu"))
+```
+
+```{r}
+HAB<- read.csv("HAB_2021_DDAmetagenome_NewDataForCheck_092622.csv")
+HABgo = HAB[, 2:35]
+names(HABgo) = paste("X", substring(names(HABgo), 5), sep="")
+m = cor(HABgo, use="pairwise.complete.obs")
+corrplot(m, type="upper", order="alphabet",
+         col=brewer.pal(n=33, name="RdYlBu"))
+```
+
+```{r}
+library(corrplot)
+dfpeps_corrplot <- read.csv("~/Documents/UW Documents/algae_proj/22_07_13_renorm/HAB_SkylineCleaned_TICnormalized_PRTC.csv") # renaming my final corrected dataset with NA included, peps as rows and timepoints/samples as columns with peptide intensities as values
+dfpeps_corrplot = dfpeps_corrplot[, 4:37]
+dfpeps_corrplot[is.na(dfpeps_corrplot)] <- 0 # turn NA to zero
+M<-cor(dfpeps_corrplot) # necessary for corrplot
+corrplot(M, method="circle", order = "AOE") # actual plot
+```
+
+
+```{r}
+library(corrplot)
+dfpeps_corrplot <- read.csv("HAB_2021_DDAmetagenome_NewDataForCheck_092622.csv") # renaming my final corrected dataset with NA included, peps as rows and timepoints/samples as columns with peptide intensities as values
+dfpeps_corrplot = dfpeps_corrplot[, 2:35]
+dfpeps_corrplot[is.na(dfpeps_corrplot)] <- 0 # turn NA to zero
+M<-cor(dfpeps_corrplot) # necessary for corrplot
+corrplot(M, method="circle", order = "AOE") # actual plot
+```
+
+
+```{r}
+library(umap)
+library(ggplot2)
+tHABgo = t(HABgo)
+tHABgo[is.na(tHABgo)] = 0
+u = umap(tHABgo)
+
+days = substr(rownames(tHABgo), 2, 3)
+ggplot() + geom_point(aes(x = u$layout[, 1], y = u$layout[, 2], col = as.factor(days))) + geom_text(aes(x = u$layout[,1] + .12, y = u$layout[,2], label = rownames(tHABgo)), size=2.2) +  xlab("UMAP1") + ylab("UMAP2")
+
+hours = substr(rownames(tHABgo), 5, 6)
+ggplot() + geom_point(aes(x = u$layout[, 1], y = u$layout[, 2], col = as.factor(hours))) + geom_text(aes(x = u$layout[,1] + .12, y = u$layout[,2], label = rownames(tHABgo)), size=2.2) + xlab("UMAP1") + ylab("UMAP2")
+```
